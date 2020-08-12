@@ -1,0 +1,624 @@
+
+```{r warning=FALSE, message=FALSE}
+library(tidyverse)
+library(readxl)
+library(readr)
+library(stringr)
+library(rvest)
+library(data.table)
+library(purrr)
+library(vroom)
+library(tidytext)
+library(textdata)
+library(slider)
+```
+
+# Function for extracting content.
+
+```{r}
+extract_dt <- function(filename) {
+  file1 <- read_html(filename)
+  gv_key <- basename(dirname(filename)) #Getting the company's unique identifier
+  gv_year <- basename(dirname(dirname(filename))) #Getting the year
+  GV <- paste(gv_key, gv_year, sep = "_")
+  # Extract document headings with N of 50...
+  doc_node <-
+    file1 %>% html_nodes('.c0') %>% html_node('.c1') %>% html_node('.c2')
+  number_list <- list("DOCUMENT", "DOCUMENTS")
+  doc_no <- doc_node %>% html_text()
+  ptrn <- paste(number_list, collapse = '|')
+  doc_no <- doc_no[grepl(ptrn, doc_no)] #Take only those nodes which has the pattern
+  "DOCUMENT"
+  
+  
+  all_text_node <- file1 %>% html_nodes('span.c2') #Takes all the relevant text
+  #i.e. (Date, Publisher name, content of the article)
+  all_text <- html_text(all_text_node)
+  
+  content_organised = vector()
+  outlets_organised = vector()
+  date_organised = vector()
+  
+  indices = which(all_text %in% doc_no) #Tracks the start of every new article
+  indices[length(doc_no) + 1] = length(all_text)
+
+  #This chunk is based on observation from articles. 
+  #Majority of articles have Outlet names right after Doc No.
+  #Dates are mentioned right after Outlet names
+  for (i in 1:length(doc_no)) {
+    #content_organised[i] = paste(all_text[(indices[i]):(indices[i + 1] - 1)],collapse = ' ')
+    outlets_organised[i] = all_text[indices[i]+1]
+    date_organised[i] = all_text[indices[i]+2]
+  }
+  
+  
+  x1 = data.frame(
+    id = 1:length(doc_no),
+    date = date_organised,
+    outlet = outlets_organised,
+    #content = content_organised,
+    GVKEY = GV,
+    stringsAsFactors = FALSE
+  )
+  
+  return(x1)
+  }
+```
+
+
+#Function for extracting headlines
+
+```{r}
+headlines_dt <- function(filename) {
+  file1 <- read_html(filename)
+  gv_key <- basename(dirname(filename)) #Getting the company's unique identifier
+  gv_year <- basename(dirname(dirname(filename))) #Getting the year
+  GV <- paste(gv_key, gv_year, sep = "_")
+  
+  # Extract document headings with N of 50...
+  doc_node <-
+    file1 %>% html_nodes('.c0') %>% html_node('.c1') %>% html_node('.c2')
+  number_list <- list("DOCUMENT")
+  doc_no <- doc_node %>% html_text()
+  ptrn <- paste(number_list, collapse = '|')
+  doc_no <- doc_no[grepl(ptrn, doc_no)] #Take only those nodes which has the pattern
+  "DOCUMENT"
+  
+  # Extract titles
+  title_node <-
+    file1 %>% html_nodes('.c4') %>% html_node('.c5') %>% html_node('.c6')
+  title_text <- html_text(title_node)
+  title_text <- title_text[!is.na(title_text)]
+  title_text
+  
+if((length(title_text) - length(doc_no)) == 0) #If no. of title = no. of docs do as usual
+{
+  x1 = data.frame(
+    id = 1:length(doc_no),
+    headline = title_text,
+    GVKEY = GV,
+    missing_title = 0,
+    stringsAsFactors = FALSE
+  )
+}else #else, find the difference and add psuedo titles. Warning: We will miss the order of titles
+{
+ diff = length(doc_no) - length(title_text) #No. of missing titles
+ n = length(title_text)
+ 
+ if(n==0){diff = -1} #No title in the file, means c4,c5,c6 is wrong and hence a anomaly
+ 
+ if(diff>0){
+   for (i in 1:diff) {
+   title_text[n+i] = title_text[n]
+   }
+   
+  x1 = data.frame(
+    id = 1:length(doc_no),
+    headline = title_text,
+    GVKEY = GV,
+    missing_title = diff,
+    stringsAsFactors = FALSE
+  )
+ }
+ else{
+   x1 = data.frame(
+    id = 1:length(doc_no),
+    headline = NA,
+    GVKEY = GV,
+    missing_title = "ANOMALY",
+    stringsAsFactors = FALSE
+  )
+ }
+ 
+}
+  
+  return(x1)
+  }
+
+
+
+#test
+#data1 <- extract_dt(complete.path[1])
+dt <- headlines_dt(complete.path[18531])
+
+```
+
+# Loop
+
+
+```{r}
+files.path <- c("C://Users//dhana//Documents//RA_Data//Data and Codes FT//RawNewsTiejun//SP500//Unzipped//")
+
+foldersA <- list.files(files.path)#Represents the folder 1995,1996,1997...2013
+
+data.paths.list <- list()
+for(i in 1:length(foldersA)){
+  data.paths <- list.files(paste0(files.path,"//",foldersA[i],"//",foldersA[i],"//"))
+  data.paths <- unlist(data.paths)
+  data.paths.list[[i]] <- paste0(files.path,foldersA[i],"//",foldersA[i],"//",data.paths)
+}
+
+data.paths <- unlist(data.paths.list)#Represents every subfolder except HTML Files
+
+complete.path <- list()
+empty.count <- 0
+for(z in 1:length(data.paths)){
+  html.file <- list.files(paste0(data.paths[z],"//"))
+  if (length(html.file) == 0){
+    empty.count <- empty.count + 1
+  }else{
+  complete.path[[z]] <- paste0(data.paths[z],"//",html.file)
+  }
+}
+complete.path <- unlist(complete.path)#Includes the file path of HTML files
+#3224 are empty
+length(complete.path)
+# 24713 records
+
+saving.path_1 <- c("C://Users//dhana//Documents//RA_Data//Data and Codes FT//RawNewsTiejun//SP500//Dissertation1//")
+
+saving.path_2 <- c("C://Users//dhana//Documents//RA_Data//Data and Codes FT//RawNewsTiejun//SP500//Dissertation2//")
+
+
+start_time <- Sys.time()
+
+for(k in 18000:24000){
+  dt <- extract_dt(filename = complete.path[k])
+  if(is.null(dt) == TRUE){
+  }else{vroom_write(dt,paste0(saving.path_1,"Text_",k,".txt"), delim = " ", col_names = T)}
+}
+
+for(k in 18000:24000){
+  dt <- headlines_dt(filename = complete.path[k])
+  if(is.null(dt) == TRUE){
+  }else{vroom_write(dt,paste0(saving.path_2,"Text_",k,".txt"), delim = " ", col_names = T)}
+}
+
+total_time <- Sys.time() - start_time
+total_time #2.47 hours for 12000 files
+
+```
+
+
+
+
+```{r}
+list_of_files_1 <- list.files(path = "C://Users//dhana//Documents//RA_Data//Data and Codes FT//RawNewsTiejun//SP500//Dissertation1//", recursive = TRUE,
+                            pattern = "\\.txt$", 
+                            full.names = TRUE)
+length(list_of_files_1)
+list_of_files_2 <- list.files(path = "C://Users//dhana//Documents//RA_Data//Data and Codes FT//RawNewsTiejun//SP500//Dissertation2//", recursive = TRUE,
+                            pattern = "\\.txt$", 
+                            full.names = TRUE)
+length(list_of_files_2)
+df_1 <- vroom(list_of_files_1, id = "Filename", delim = " ", escape_backslash = T)
+df_2 <- vroom(list_of_files_2, id = "Filename", delim = " ", escape_backslash = F)#One small backslash screwed my wholeeee project lol
+
+setDT(df_1) #Converts data.frame to data.table which is fast to process
+setDT(df_2) #Converts data.frame to data.table which is fast to process
+
+df_1 <- df_1 %>% mutate(join_key = c(1:nrow(df_1)))
+df_2 <- df_2 %>% mutate(join_key = c(1:nrow(df_2)))
+
+
+df_final <- merge.data.table(df_1, df_2, by = c("join_key"))
+df_final_12000 <- df_final %>% select("Filename.x", "id.x", "date", "outlet", "GVKEY.x", "headline","missing_title")
+save(df_final_12000, file = "df_dissertation_12000.rda")
+
+#Data is scraped and stored in a single file ready to be trained.
+
+```
+
+
+```{r}
+#Narrowing down the dataset to 31 companies
+
+start_time <- Sys.time()
+load("df_dissertation_12000.rda")
+total_time <- Sys.time() - start_time
+total_time
+
+df_final_12000 <- df_final_12000 %>% mutate(row_no = c(1:nrow(df_final_12000)))
+
+companies <- list ("12141_","12142_","2136_","5606_","6008",
+                   "9899_","8479_","1300_","1690_","10846_",
+                   "7562_","2968_","12124_","10499_","3066",
+                   "7154_","170617_","14489_","186106_","9061_",
+                   "4598_","7906_","7267_","4062_","12756_",
+                   "15521_","25434_","64768_","114628_","62634_",
+                   "24800_","20779_")
+
+
+pattern = paste(companies, collapse = '|')
+df_final_12000 <- df_final_12000[grepl(pattern, df_final_12000$GVKEY.x),]
+df_microsoft <- df_final_12000[grepl("12141_", df_final_12000$GVKEY.x),]
+df_oracle <- df_final_12000[grepl("12142_", df_final_12000$GVKEY.x),]
+df_verizon <- df_final_12000[grepl("2136_", df_final_12000$GVKEY.x),]
+df_HP <- df_final_12000[grepl("5606_", df_final_12000$GVKEY.x),]
+df_intel <- df_final_12000[grepl("6008_", df_final_12000$GVKEY.x),]
+df_ATT <- df_final_12000[grepl("9899_", df_final_12000$GVKEY.x),]
+df_pepsi <- df_final_12000[grepl("8479_", df_final_12000$GVKEY.x),]
+df_honeywell <- df_final_12000[grepl("1300_", df_final_12000$GVKEY.x),]
+df_apple <- df_final_12000[grepl("1690_", df_final_12000$GVKEY.x),]
+df_morganJP <- df_final_12000[grepl("2968_", df_final_12000$GVKEY.x),]
+df_morganstanley <- df_final_12000[grepl("12124_", df_final_12000$GVKEY.x),]
+df_TI <- df_final_12000[grepl("10499_", df_final_12000$GVKEY.x),]
+df_citi <- df_final_12000[grepl("3066_", df_final_12000$GVKEY.x),]
+df_mcd <- df_final_12000[grepl("7154_", df_final_12000$GVKEY.x),]
+df_fb <- df_final_12000[grepl("170617_", df_final_12000$GVKEY.x),]
+df_dell <- df_final_12000[grepl("14489_", df_final_12000$GVKEY.x),]
+df_hsbc <- df_final_12000[grepl("9061_", df_final_12000$GVKEY.x),]
+df_fedex <- df_final_12000[grepl("4598_", df_final_12000$GVKEY.x),]
+df_nike <- df_final_12000[grepl("7906_", df_final_12000$GVKEY.x),]
+df_amazon <- df_final_12000[grepl("64768_", df_final_12000$GVKEY.x),]
+df_gldman <- df_final_12000[grepl("114628_", df_final_12000$GVKEY.x),]
+
+
+technical <- list ("net", "income", "EBITDA", "ebitda", "GAAP", "gaap",
+                   "FCF", "fcf", "EPS", "eps", "earnings", "dividend", 
+                   "shares", "valuation", "P/E", "cash", "flow", "balance",
+                   "sheet", "shareholder", "share", "asset", "Asset", "liability",
+                   "Accruals", "accruals", "liquidity", "collateral","FICO",
+                   "lien", "budget", "CDS", "FHA", "IPO", "IFRS", "IRR", "IRA",
+                   "IRS", "JV", "LBO", "LLC", "LOC", "LOI", "LTV", "LCR", "MOU",
+                   "M&A", "NAV", "NPV", "ROI", "ROIC", "RICO", "CD","stock", "repurchase",
+                   "SBA", "2-for-1", "split", "fall", "shrink", "FAA")
+
+tech_ptn = paste(technical, collapse = '|')
+
+
+main <- list ("EBITDA", "GAAP", "FICO", "EPS", "P/E", "liability", "liquidity",
+              "asset", "rally")
+
+
+d_temp <- df_gldman[grepl("profit", df_gldman$headline),]
+
+
+hdline <- c(2598024,2597988,2588738,2588787,2588702,2588710,2588728,2588756,2588761,
+            1163056,2097532,340285,1164564,26051,2331357,2602752,342320,342816,751397,
+            1611660,1613496,19942213,458191,2144771,877737,1612233,456129,1270791,
+            1381899,1381411,2705161,1381217,1381981,590158,1000478,1381177,
+            1008155,172283,128651,173710,174795,594916,594928,595045,172461,
+            2747282,762179,1788192,2055352,752466,758831,773844,1788059,2549136,
+            547966,1084942,254998,254849,254926,2528904,671882,1772216,
+            2613070,356249,2612788,2104794,1130874,2613050,355952,301858,2341374,1809519,
+            832217,1767429,824715,825219,827251,825538,828799,834542,1230851,1221437,
+            498741,499025,502435,500918,1310735,1310199,498812,1313273,498959,917628,1308985,503979,
+            333344,2085927,331832,1246489,331188,2085398,331590,
+            283917,2061162,283877,283742,1473432,2284101,699566,1794723,
+            90791,90890,1968970,1969006,2173502,2173568,90823,1969074,2173458,2173490,2173563,2173601,
+            1036427,1414600,1742403,1037179,206438,627986,1036279,206515,1036783,628488,2503325,
+            1910271,1234570,1235865,1236741,1233322,1234839,1589807,1236301,1911346,1236657,1234046,1243257,
+            40424,40425,376265,1825897,377193,376355,376497,40402,40426,376825,376620,377119,2626246,376151,
+            2536088,
+            961238,1352665,549213,548269,1685275,548629,1685167,549136,1685440,1685012,2193616,549552,549335,
+            237988,654362,654752,2255897,1754199,2518882,2256329,654775,1436248,1436560,1436575,1435845,
+            173168,2495539,194529,616452,1730882,194960,1731603,194795,1025089,616244,2019554,2019573,
+            1501192,314283,315194,314706,315287,313862,317818,317977,733947,2575259,727907,312392,731752)
+
+d_hdline <- df_final_12000 %>% filter(row_no %in% hdline)
+
+write.csv(d_hdline, file = "C:\\Users\\dhana\\Documents\\Dissertaion_Headline.csv",row.names = F)
+
+
+a <- c(90791,90890,1968970,1969006,2173502,2173568,90823,1969074,2173458,2173490,2173563,2173601)
+df_citi %>% filter(row_no %in% a)
+```
+
+
+```{r}
+#word embedding model
+
+
+tidy_headline <- df_final_12000 %>% 
+  select(headline, row_no) %>%
+  unnest_tokens(word, headline) %>%
+  group_by(word) %>%
+  filter(n() >= 50) %>%
+  ungroup()
+
+nested_words <- tidy_headline %>%
+  nest(words = c(word))
+
+
+slide_windows <- function(tbl, window_size) {
+  
+  skipgrams <- slider::slide(
+    tbl, ~.x, .after = window_size - 1, .step = 1 ,.complete = TRUE
+  )
+  
+  safe_mutate <- safely(mutate)
+  
+  out <- map2(skipgrams, 1:length(skipgrams), ~ safe_mutate(.x , window_id = .y))
+  
+  out %>% 
+    purrr::transpose() %>%
+    purrr::pluck("result") %>%
+    compact() %>%
+    bind_rows()
+}
+
+library(widyr)
+library(furrr)
+
+starttime <- Sys.time()
+plan(multiprocess)
+
+tidy_pmi <- nested_words %>%
+  mutate(words = future_map(words, slide_windows, 4)) %>%
+  unnest(words) %>%
+  unite(window_id, row_no, window_id) %>%
+  pairwise_pmi(word, window_id)
+
+endtime <- Sys.time()
+total = endtime - starttime
+total
+
+save(tidy_pmi, file = "4_window_PMI.rda")
+load("4_window_PMI.rda")
+
+tidy_word_vectors <- tidy_pmi %>%
+  widely_svd(
+    item1, item2, pmi,
+    nv = 100, maxit = 1000
+  )
+#Hurrah!! The word embeddings are generated based on our financial data
+
+
+#Exploring the word embeddings
+
+nearest_neighbours <- function(df, token) {
+  df %>%
+    widely(~ . %*%  (.[token,]),
+           sort = T,
+           maximum_size = NULL)(item1, dimension, value) %>%
+    select(-item2)
+}
+
+tidy_word_vectors %>% nearest_neighbours("t")
+
+#Pre-trained model
+library(textdata)
+glove6b <- embedding_glove6b(dimensions = 100)
+
+
+texas <- glove6b[which(glove6b$token == "texas"),]
+ebit <- glove6b[which(glove6b$token == "ebit"),]
+
+tidy_glove <- glove6b %>% 
+  pivot_longer(contains("d"),
+               names_to = "dimension") %>%
+  rename(item1 = token)
+
+tidy_glove %>%
+  nearest_neighbours("cds")
+
+```
+
+
+
+```{r}
+#Experimental Execution
+
+data <- read_csv(file = "C:\\Users\\dhana\\Documents\\Dissertaion_Headline.csv")
+
+data <- data %>% select(date, outlet, headline, Brand, row_no, GVKEY.x)
+
+first <- c(2598024,2597988,2588702,2588710,1163056,2331357,26051,342816,1611660,877737,
+           2144771,1612233,1381899,1381981,2705161,1381177,1008155,594916,172283,2747282,
+           752466,547966,2528904,2613070,2613050,832217,825538,1310735,503979,2085927,331188,
+           283917,1473432,2173502,2173601,1036427,206515,1236741,1236301,40424,40426,2536088,
+           961238,549136,237988,654775,1730882,1731603,315194,317977)
+
+second <- c(2588738,2588728,2588787,340285,2602752,1164564,458191,1270791,1381411,590158,
+            1381217,1000478,128651,594928,174795,595045,1788192,758831,2055352,773844,
+            1084942,671882,1772216,356249,355952,1767429,828799,498741,498959,333344,
+            2085398,2061162,2284101,90791,90823,1414600,1036279,1233322,1236657,1234839,
+            40425,40402,1352665,1685440,2518882,1436248,194529,194795,1501192,733947)
+
+second_1 <- c(2588738,2588787,1164564,1270791,590158,
+              1381217,594928,758831,2284101,40425,
+              1501192,356249,2085398,1788192,2061162,
+              194529,333344,40402,174795,1236657,
+              90823,128651,498959,1381411,1352665)
+
+second_2 <- c(2588728,340285,2602752,458191,
+            1000478,595045,2055352,773844,
+            1084942,671882,1772216,355952,1767429,828799,498741,
+            90791,1414600,1036279,1233322,1234839,
+            1685440,2518882,1436248,194795,733947)
+
+#check: which(second %in% third)
+
+third <- c(2588756,2588761,342320,172461,762179,1788059,2549136,254998,254849,254926,
+           2612788,2104794,301858,824715,834542,1230851,499025,500918,1308985,1310199,
+           331832,1246489,331590,283877,699566,90890,1969074,1968970,2173568,1742403,
+           1036783,1037179,1910271,1589807,1234570,1234046,1243257,376265,376825,1825897,
+           377119,2626246,549213,1685012,2256329,1436560,2495539,616244,314283,2575259)
+
+third_1 <- c(2588756,342320,762179,2549136,254926,
+           301858,824715,1230851,500918,1310199,
+           331832,1246489,331590,90890,1968970,
+           1589807,1234570,376825,1825897,1234046,
+           377119,2256329,2495539,616244,2575259)
+
+third_2 <- c(172461,254998,2104794,1969074,1036783,
+             254849,2626246,1910271,314283,376265,
+             1685012,283877,1037179,1308985,549213,
+             1788059,834542,1243257,1742403,1436560,
+             2588761,699566,2612788,2173568,499025)
+
+fourth <- c(1130874,2341374,1809519,825219,827251,1221437,1313273,502435,917628,498812,
+            283742,1794723,1969006,2173458,2173490,2173563,628488,206438,2503325,627986,
+            1235865,1911346,377193,376620,376355,376497,376151,1685275,2193616,548629,
+            549552,1685167,549335,654362,1436575,2255897,1754199,1435845,616452,1025089,
+            2019554,194960,2019573,314706,727907,317818,731752,313862,315287,312392)
+
+
+fourth_1 <- c(2341374,827251,502435,917628,
+            283742,1794723,2173490,628488,627986,
+            376620,376355,376497,1685275,548629,
+            549552,549335,654362,1754199,1435845,616452,
+            2019573,727907,317818,313862,315287)
+
+fourth_2 <- c(1130874,377193,1436575,1685167,1313273,
+              312392,2255897,194960,1911346,206438,
+              2173563,731752,825219,2173458,314706,
+              498812,1809519,2019554,2193616,1221437,
+              376151,1969006,1025089,2503325,1235865)
+
+
+dissertation_data_1 <- data %>% filter(row_no %in% first) 
+write.csv(dissertation_data_1, file = "C:\\Users\\dhana\\Documents\\Dissertaion_Data_1.csv",row.names = F)
+
+dissertation_data_2 <- data %>% filter(row_no %in% second) 
+write.csv(dissertation_data_2, file = "C:\\Users\\dhana\\Documents\\Dissertaion_Data_2.csv",row.names = F)
+
+dissertation_data_2.1 <- data %>% filter(row_no %in% second_1) 
+write.csv(dissertation_data_2.1, file = "C:\\Users\\dhana\\Documents\\Dissertaion_Data_2.1.csv",row.names = F)
+
+dissertation_data_2.2 <- data %>% filter(row_no %in% second_2) 
+write.csv(dissertation_data_2.2, file = "C:\\Users\\dhana\\Documents\\Dissertaion_Data_2.2.csv",row.names = F)
+
+dissertation_data_3 <- data %>% filter(row_no %in% third) 
+write.csv(dissertation_data_3, file = "C:\\Users\\dhana\\Documents\\Dissertaion_Data_3.csv",row.names = F)
+
+dissertation_data_3.1 <- data %>% filter(row_no %in% third_1) 
+write.csv(dissertation_data_3.1, file = "C:\\Users\\dhana\\Documents\\Dissertaion_Data_3.1.csv",row.names = F)
+
+dissertation_data_3.2 <- data %>% filter(row_no %in% third_2) 
+write.csv(dissertation_data_3.2, file = "C:\\Users\\dhana\\Documents\\Dissertaion_Data_3.2.csv",row.names = F)
+
+dissertation_data_4 <- data %>% filter(row_no %in% fourth) 
+write.csv(dissertation_data_4, file = "C:\\Users\\dhana\\Documents\\Dissertaion_Data_4.csv",row.names = F)
+
+dissertation_data_4.1 <- data %>% filter(row_no %in% fourth_1) 
+write.csv(dissertation_data_4.1, file = "C:\\Users\\dhana\\Documents\\Dissertaion_Data_4.1.csv",row.names = F)
+
+dissertation_data_4.2 <- data %>% filter(row_no %in% fourth_2) 
+write.csv(dissertation_data_4.2, file = "C:\\Users\\dhana\\Documents\\Dissertaion_Data_4.2.csv",row.names = F)
+
+#Headline part done
+
+
+
+#Sentence-embeddings for the headlines
+
+data_1 <- data %>% filter(row_no %in% first) %>% select(headline, row_no)
+
+tidy_headline <- data_1 %>% 
+  select(headline, row_no) %>%
+  unnest_tokens(word, headline) %>%
+  group_by(word) %>%
+  ungroup()
+
+#problems: '$' is ignored. 'at&t' becomes 'at' , 't' and so we change them specifically
+# 's will not be found in our word embeddings.
+#m&a is separated by m,a
+at_array <- which(tidy_headline$word %in% c("at","t"))
+m_array <- which(tidy_headline$word %in% c("m","a"))
+
+tidy_headline$word[grepl("'s",tidy_headline$word)]
+which(grepl("'s",tidy_headline$word))
+tidy_headline$word <- str_replace(tidy_headline$word, "'s", "")
+tidy_headline$word[grepl("'s",tidy_headline$word)]
+
+for (i in at_array) {
+  if((i+1) %in% at_array){
+    tidy_headline$word[i] <- "at&t"
+    tidy_headline$word[i+1] <- "at&t"
+  }
+}
+#at&t problem solved
+
+for (i in m_array) {
+  if((i+1) %in% m_array){
+    tidy_headline$word[i] <- "m&a"
+    tidy_headline$word[i+1] <- "m&a"
+  }
+}
+#m&a problem solved
+
+tidy_headline  <- tidy_headline %>% group_by(row_no) %>% nest(sentence = word)
+
+doc_embedding <- function(df) {
+  
+  word_embedding_present <- data.frame()
+  
+  for (i in 1:nrow(df)) {
+    
+    if(df$word[i] %in% glove6b$token){
+      
+      word = df$word[i]
+      word_embedding_present[i, 1:100] <- glove6b %>% filter(token == word) %>% select(-token)
+    }
+    
+    else{
+      #We are doing this because if an unknown word comes in the very first word of a sentence, then d1,d2,,,d100 is replaced by V1,V2...V100. 
+      temp <- glove6b %>% filter(token == "not_present") %>% select(-token)
+      temp[1,] <- 0
+      word_embedding_present[i, 1:100] <- temp
+    }
+  }
+  
+  word_embedding_present <- word_embedding_present %>%
+    bind_rows(summarise_all(., funs(if(is.numeric(.)) sum(.) else "Sentence")))
+
+  return(word_embedding_present)
+  
+}
+
+
+tidy_headline <- tidy_headline %>% 
+  mutate(embedding = map(sentence,doc_embedding))
+
+
+
+
+
+
+
+
+
+
+
+
+#Not relevant checks
+"m&a" %in% glove6b$token
+
+a <- tidy_headline$data[1]$word
+
+wem <- data.frame()
+
+wem[1,1:100] <- glove6b %>% filter(token == "compaq")  %>% select(-token)
+wem[2,1:100] <- glove6b %>% filter(token == "oracle") %>% select(-token)
+temp <- glove6b %>% filter(token == "not_present") %>% select(-token)
+temp[1,] <- 0
+wem[3,1:100] <- temp
+
+wem <- wem %>%
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) sum(.) else "Sentence")))
+
+a <- glove6b %>% filter(token == "compaq") %>% select(-token)
+
+class(tidy_headline$sentence[1])
